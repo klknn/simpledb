@@ -1,0 +1,17 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/simpledb
+simpledb.so
+simpledb.dylib
+simpledb.dll
+simpledb.a
+simpledb.lib
+simpledb-test-*
+*.exe
+*.pdb
+*.o
+*.obj
+*.lst
+*~

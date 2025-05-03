@@ -1,0 +1,9 @@
+{
+	"authors": [
+		"klknn"
+	],
+	"copyright": "Copyright © 2025, klknn",
+	"description": "A minimal D database",
+	"license": "BSL-1.0",
+	"name": "simpledb"
+}

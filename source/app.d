@@ -15,7 +15,7 @@ import core.stdc.stdio;
 import core.sys.posix.stdio;
 
 enum MetaCommandResult { SUCCESS, UNRECOGNIZED }
-enum PrepareResult { SUCCESS, UNRECOGNIZED, SYNTAX_ERROR }
+enum PrepareResult { SUCCESS, UNRECOGNIZED, SYNTAX_ERROR, STRING_TOO_LONG, NEGATIVE_ID }
 enum StatementType { INSERT, SELECT }
 
 struct Row {
@@ -135,19 +135,37 @@ struct Statement {
   StatementType type;
   Row row_to_insert;
 
-  PrepareResult prepare(const(char)[] buffer) {
+  PrepareResult prepare_insert(const(char)[] buffer) {
+    this.type = StatementType.INSERT;
+    size_t len = strlen(buffer.ptr) + 1;
+    char* buf = cast(char*) malloc(len);
+    memcpy(buf, buffer.ptr, len);
+    char* keyword = strtok(buf, " ");
+    assert(strcmp(keyword, "insert") == 0);
+    char* id_string = strtok(null, " ");
+    char* username = strtok(null, " ");
+    char* email = strtok(null, " ");
+    if (id_string is null || username is null || email is null) {
+      return PrepareResult.SYNTAX_ERROR;
+    }
+    int id = atoi(id_string);
+    if (id < 0) return PrepareResult.NEGATIVE_ID;
+    if (strlen(username) >= Row.username.length) {
+      return PrepareResult.STRING_TOO_LONG;
+    }
+    if (strlen(email) >= Row.email.length) {
+      return PrepareResult.STRING_TOO_LONG;
+    }
+
+    this.row_to_insert.id = id;
+    strcpy(this.row_to_insert.username.ptr, username);
+    strcpy(this.row_to_insert.email.ptr, email);
+    return PrepareResult.SUCCESS;
+  }
+
+  PrepareResult prepare(const char[] buffer) {
     if (buffer[0 .. 6] == "insert") {
-      this.type = StatementType.INSERT;
-      int args_assigned = sscanf(
-          buffer.ptr,
-          "insert %d %s %s",
-          &this.row_to_insert.id,
-          &this.row_to_insert.username[0],
-          &this.row_to_insert.email[0]);
-      if (args_assigned < 3) {
-        return PrepareResult.SYNTAX_ERROR;
-      }
-      return PrepareResult.SUCCESS;
+      return this.prepare_insert(buffer);
     }
     if (buffer == "select") {
       this.type = StatementType.SELECT;
@@ -176,6 +194,18 @@ unittest {
   assert(statement.row_to_insert.id == 1);
   assert(strcmp(statement.row_to_insert.username.ptr, "cstack") == 0);
   assert(strcmp(statement.row_to_insert.email.ptr, "foo@bar.com") == 0);
+
+  assert(statement.prepare("insert -1 cstack foo@bar.com") == PrepareResult.NEGATIVE_ID);
+
+  enum int name_offset = "insert 1 ".length;
+  enum int name_len = Row.username.sizeof;
+  enum int email_len = Row.email.sizeof;
+  char[name_offset + name_len + 1 + email_len + 1] long_query = "insert 1 ";
+  long_query[name_offset .. name_offset + name_len] = 'a';
+  long_query[name_offset + name_len] = ' ';
+  long_query[name_offset + name_len + 1 .. $] = 'b';
+  long_query[$-1] = 0;
+  assert(statement.prepare(long_query) == PrepareResult.STRING_TOO_LONG);
 }
 
 MetaCommandResult do_meta_command(char[] buffer) {
@@ -260,6 +290,12 @@ version (unittest) {
           break;
         case PrepareResult.SYNTAX_ERROR:
           printf("Syntax error. Could not parse statement.\n");
+          continue;
+        case PrepareResult.NEGATIVE_ID:
+          printf("ID must be positive.\n");
+          continue;
+        case PrepareResult.STRING_TOO_LONG:
+          printf("String is too long.\n");
           continue;
         case PrepareResult.UNRECOGNIZED:
           printf("Unrecognized keyword at start of %s.\n", input_buffer.ptr);

@@ -248,7 +248,7 @@ version (unittest) {
   private template from(string modname) {
     mixin("import from = ", modname, ";");
   }
-  extern (C) int main(int argc, const char** argv) {
+  extern (C) int main() {
     import core.stdc.stdio;
     import std.traits;
     static foreach (mod; ["app"]) {
@@ -270,8 +270,7 @@ version (unittest) {
   }
 
 } else {
-  extern (C)
-      int main() {
+  extern (C) int main() {
     Table table;
     table.allocate(100);
     while (true) {
@@ -316,6 +315,5 @@ version (unittest) {
           break;
       }
     }
-    return EXIT_SUCCESS;
   }
 }

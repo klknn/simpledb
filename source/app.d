@@ -12,7 +12,6 @@
 import core.stdc.string;
 import core.stdc.stdlib;
 import core.stdc.stdio;
-import core.sys.posix.stdio;
 
 enum MetaCommandResult { SUCCESS, UNRECOGNIZED }
 enum PrepareResult { SUCCESS, UNRECOGNIZED, SYNTAX_ERROR, STRING_TOO_LONG, NEGATIVE_ID }
@@ -80,9 +79,10 @@ struct Table {
     return ROWS_PER_PAGE * pages.length;
   }
 
-  this(uint max_pages) {
+  void allocate(size_t max_pages) {
     void** p = cast(void**) malloc(max_pages * (void*).sizeof);
     this.pages = p[0 .. max_pages];
+    this.pages[] = null;
   }
 
   ~this() {
@@ -123,7 +123,8 @@ struct Table {
 
 @("Table test")
 unittest {
-  Table table = Table(1);
+  Table table;
+  table.allocate(1);
   Row row;
   foreach (_; 0 .. ROWS_PER_PAGE) {
     assert(table.insert(row) == ExecuteResult.SUCCESS);
@@ -164,10 +165,10 @@ struct Statement {
   }
 
   PrepareResult prepare(const char[] buffer) {
-    if (buffer[0 .. 6] == "insert") {
+    if (strncmp(buffer.ptr, "insert", 6) == 0) {
       return this.prepare_insert(buffer);
     }
-    if (buffer == "select") {
+    if (strcmp(buffer.ptr, "select") == 0) {
       this.type = StatementType.SELECT;
       return PrepareResult.SUCCESS;
     }
@@ -209,7 +210,7 @@ unittest {
 }
 
 MetaCommandResult do_meta_command(char[] buffer) {
-  if (buffer == ".exit") {
+  if (strcmp(buffer.ptr, ".exit") == 0) {
     free(buffer.ptr);
     exit(EXIT_SUCCESS);
   } else {
@@ -222,16 +223,19 @@ void print_prompt() {
 }
 
 char[] read_stdin() {
-  char* ptr;
-  size_t len;
-  ssize_t bytes_read = getline(&ptr, &len, stdin);
-  if (bytes_read <= 0) {
+  int len = 255;
+  char* ptr = cast(char*) malloc(len);
+  // size_t len;
+  // auto bytes_read = getline(&ptr, &len, stdin);
+  if (fgets(ptr, len, stdin) is null) { // bytes_read <= 0) {
     printf("Error reading input\n");
     exit(EXIT_FAILURE);
   }
   // Ignore trailing new line;
-  ptr[bytes_read - 1] = 0;
-  return ptr[0 .. bytes_read - 1];
+  // ptr[bytes_read - 1] = 0;
+  size_t slen = strlen(ptr);
+  ptr[slen-1] = 0;
+  return ptr[0 .. slen]; // ptr[0 .. bytes_read - 1];
 }
 
 @("Assert true test")
@@ -268,7 +272,8 @@ version (unittest) {
 } else {
   extern (C)
       int main() {
-    Table table = Table(100);
+    Table table;
+    table.allocate(100);
     while (true) {
       print_prompt();
       char[] input_buffer = read_stdin();

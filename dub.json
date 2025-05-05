@@ -2,9 +2,22 @@
     "authors": [
         "klknn"
     ],
-    "buildOptions": ["betterC"],
     "copyright": "Copyright © 2025, klknn",
     "description": "A minimal D database",
     "license": "BSL-1.0",
-    "name": "simpledb"
+    "name": "simpledb",
+    "configurations": [
+        {
+            "name": "simpledb",
+            "targetType": "executable",
+            "buildOptions": ["betterC"],
+        },
+        {
+            "name": "simpledb_repl_test",
+            "targetName": "simpledb_repl_test",
+            "targetType": "executable",
+            "mainSourceFile": "test/repl_test.d",
+            "excludedSourceFiles": ["source/app.d"]
+        }
+    ]
 }

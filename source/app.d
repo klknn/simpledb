@@ -13,14 +13,28 @@ import core.stdc.string;
 import core.stdc.stdlib;
 import core.stdc.stdio;
 
-enum MetaCommandResult { SUCCESS, UNRECOGNIZED }
-enum PrepareResult { SUCCESS, UNRECOGNIZED, SYNTAX_ERROR, STRING_TOO_LONG, NEGATIVE_ID }
-enum StatementType { INSERT, SELECT }
+enum MetaCommandResult {
+  SUCCESS,
+  UNRECOGNIZED
+}
+
+enum PrepareResult {
+  SUCCESS,
+  UNRECOGNIZED,
+  SYNTAX_ERROR,
+  STRING_TOO_LONG,
+  NEGATIVE_ID
+}
+
+enum StatementType {
+  INSERT,
+  SELECT
+}
 
 struct Row {
   uint id;
-  char[32] username;
-  char[255] email;
+  char[33] username;
+  char[256] email;
 
   void serialize(void* dst) const {
     static foreach (src; this.tupleof) {
@@ -41,7 +55,8 @@ struct Row {
 
 enum TotalFieldSizeOf(T) = {
   size_t n;
-  foreach (F; T.init.tupleof) n += F.sizeof;
+  foreach (F; T.init.tupleof)
+    n += F.sizeof;
   return n;
 }();
 
@@ -69,7 +84,10 @@ enum uint PAGE_SIZE = 4096;
 // enum uint TABLE_MAX_PAGES = 100;
 enum uint ROWS_PER_PAGE = PAGE_SIZE / TotalFieldSizeOf!Row;
 
-enum ExecuteResult { SUCCESS, TABLE_FULL }
+enum ExecuteResult {
+  SUCCESS,
+  TABLE_FULL
+}
 
 struct Table {
   uint num_rows;
@@ -87,7 +105,8 @@ struct Table {
 
   ~this() {
     foreach (p; this.pages) {
-      if (p is null) break;
+      if (p is null)
+        break;
       free(p);
     }
   }
@@ -105,7 +124,8 @@ struct Table {
   }
 
   ExecuteResult insert(ref const Row row) {
-    if (this.num_rows >= this.max_rows) return ExecuteResult.TABLE_FULL;
+    if (this.num_rows >= this.max_rows)
+      return ExecuteResult.TABLE_FULL;
     row.serialize(this.row_slot(this.num_rows));
     ++this.num_rows;
     return ExecuteResult.SUCCESS;
@@ -150,7 +170,8 @@ struct Statement {
       return PrepareResult.SYNTAX_ERROR;
     }
     int id = atoi(id_string);
-    if (id < 0) return PrepareResult.NEGATIVE_ID;
+    if (id < 0)
+      return PrepareResult.NEGATIVE_ID;
     if (strlen(username) >= Row.username.length) {
       return PrepareResult.STRING_TOO_LONG;
     }
@@ -177,10 +198,10 @@ struct Statement {
 
   ExecuteResult execute(ref Table table) {
     final switch (this.type) {
-      case StatementType.INSERT:
-        return table.insert(this.row_to_insert);
-      case StatementType.SELECT:
-        return table.select();
+    case StatementType.INSERT:
+      return table.insert(this.row_to_insert);
+    case StatementType.SELECT:
+      return table.select();
     }
   }
 }
@@ -205,7 +226,7 @@ unittest {
   long_query[name_offset .. name_offset + name_len] = 'a';
   long_query[name_offset + name_len] = ' ';
   long_query[name_offset + name_len + 1 .. $] = 'b';
-  long_query[$-1] = 0;
+  long_query[$ - 1] = 0;
   assert(statement.prepare(long_query) == PrepareResult.STRING_TOO_LONG);
 }
 
@@ -213,7 +234,8 @@ MetaCommandResult do_meta_command(char[] buffer) {
   if (strcmp(buffer.ptr, ".exit") == 0) {
     free(buffer.ptr);
     exit(EXIT_SUCCESS);
-  } else {
+  }
+  else {
     return MetaCommandResult.UNRECOGNIZED;
   }
 }
@@ -223,7 +245,7 @@ void print_prompt() {
 }
 
 char[] read_stdin() {
-  int len = 255;
+  int len = 1024;
   char* ptr = cast(char*) malloc(len);
   // size_t len;
   // auto bytes_read = getline(&ptr, &len, stdin);
@@ -234,7 +256,7 @@ char[] read_stdin() {
   // Ignore trailing new line;
   // ptr[bytes_read - 1] = 0;
   size_t slen = strlen(ptr);
-  ptr[slen-1] = 0;
+  ptr[slen - 1] = 0;
   return ptr[0 .. slen]; // ptr[0 .. bytes_read - 1];
 }
 
@@ -248,16 +270,19 @@ version (unittest) {
   private template from(string modname) {
     mixin("import from = ", modname, ";");
   }
+
   extern (C) int main() {
     import core.stdc.stdio;
     import std.traits;
+
     static foreach (mod; ["app"]) {
       static foreach (test; __traits(getUnitTests, from!mod)) {
         {
           auto udas = getUDAs!(test, string);
           static if (udas.length) {
             printf("unittest: [%s] %s ... ", mod.ptr, udas[0].ptr);
-          } else {
+          }
+          else {
             printf("unittest: [%s] %s ... ", mod.ptr, test.stringof.ptr);
           }
           test();
@@ -269,50 +294,52 @@ version (unittest) {
     return 0;
   }
 
-} else {
+}
+else {
   extern (C) int main() {
     Table table;
     table.allocate(100);
     while (true) {
       print_prompt();
       char[] input_buffer = read_stdin();
-      scope(exit) free(input_buffer.ptr);
+      scope (exit)
+        free(input_buffer.ptr);
 
-      if (input_buffer[0] == '.'){
+      if (input_buffer[0] == '.') {
         final switch (do_meta_command(input_buffer)) {
-          case MetaCommandResult.SUCCESS:
-            continue;
-          case MetaCommandResult.UNRECOGNIZED:
-            printf("Unrecognized command '%s'.\n", input_buffer.ptr);
-            continue;
+        case MetaCommandResult.SUCCESS:
+          continue;
+        case MetaCommandResult.UNRECOGNIZED:
+          printf("Unrecognized command '%s'.\n", input_buffer.ptr);
+          continue;
         }
       }
 
       Statement statement;
       final switch (statement.prepare(input_buffer)) {
-        case PrepareResult.SUCCESS:
-          break;
-        case PrepareResult.SYNTAX_ERROR:
-          printf("Syntax error. Could not parse statement.\n");
-          continue;
-        case PrepareResult.NEGATIVE_ID:
-          printf("ID must be positive.\n");
-          continue;
-        case PrepareResult.STRING_TOO_LONG:
-          printf("String is too long.\n");
-          continue;
-        case PrepareResult.UNRECOGNIZED:
-          printf("Unrecognized keyword at start of %s.\n", input_buffer.ptr);
-          continue;
+      case PrepareResult.SUCCESS:
+        break;
+      case PrepareResult.SYNTAX_ERROR:
+        printf("Syntax error. Could not parse statement.\n");
+        continue;
+      case PrepareResult.NEGATIVE_ID:
+        printf("ID must be positive.\n");
+        continue;
+      case PrepareResult.STRING_TOO_LONG:
+        printf("String is too long.\n");
+        continue;
+      case PrepareResult.UNRECOGNIZED:
+        printf("Unrecognized keyword at start of %s.\n", input_buffer.ptr);
+        continue;
       }
 
       final switch (statement.execute(table)) {
-        case ExecuteResult.SUCCESS:
-          printf("Executed.\n");
-          break;
-        case ExecuteResult.TABLE_FULL:
-          printf("Error: Table full.\n");
-          break;
+      case ExecuteResult.SUCCESS:
+        printf("Executed.\n");
+        break;
+      case ExecuteResult.TABLE_FULL:
+        printf("Error: Table full.\n");
+        break;
       }
     }
   }

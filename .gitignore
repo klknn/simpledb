@@ -3,6 +3,7 @@ docs.json
 __dummy.html
 docs/
 /simpledb
+simpledb*
 simpledb.so
 simpledb.dylib
 simpledb.dll

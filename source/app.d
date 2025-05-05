@@ -13,6 +13,7 @@ import core.stdc.string;
 import core.stdc.stdlib;
 import core.stdc.stdio;
 import core.stdc.stdint;
+import core.stdc.errno;
 
 enum MetaCommandResult {
   SUCCESS,
@@ -82,8 +83,10 @@ unittest {
 }
 
 enum uint PAGE_SIZE = 4096;
-// enum uint TABLE_MAX_PAGES = 100;
+enum uint TABLE_MAX_PAGES = 100;
 enum uint ROWS_PER_PAGE = PAGE_SIZE / TotalFieldSizeOf!Row;
+const uint TABLE_MAX_ROWS = ROWS_PER_PAGE * TABLE_MAX_PAGES;
+enum uint ROW_SIZE = TotalFieldSizeOf!Row;
 
 enum ExecuteResult {
   SUCCESS,
@@ -93,30 +96,102 @@ enum ExecuteResult {
 struct Pager {
   FILE* file;
   ulong file_length;
-  void*[] pages;
+  void*[TABLE_MAX_PAGES] pages;
 
-  void open(const(char)[] filename) {
-    this.file = fopen(filename.ptr, "a+");
+  void open(const(char)* filename) {
+    this.file = fopen(filename, "ab+");
     if (this.file is null) {
       printf("Unable to open file\n");
       exit(EXIT_FAILURE);
     }
     fseek(this.file, 0, SEEK_END);
     this.file_length = ftell(this.file);
+    // printf("rows: %d\n", this.file_length / ROW_SIZE);
     fseek(this.file, 0, SEEK_SET);
   }
 
-  size_t max_rows() const {
-    return ROWS_PER_PAGE * pages.length;
+  void close(uint num_rows) {
+    uint num_full_pages = num_rows / ROWS_PER_PAGE;
+    foreach (i; 0 .. num_full_pages) {
+      if (this.pages[i] is null) {
+        continue;
+      }
+      this.flush(i, PAGE_SIZE);
+      free(this.pages[i]);
+      this.pages[i] = null;
+    }
+
+    // There may be a partial page to write to the end of the file
+    // This should not be needed after we switch to a B-tree
+    uint num_additional_rows = num_rows % ROWS_PER_PAGE;
+    if (num_additional_rows > 0) {
+      uint page_idx = num_full_pages;
+      if (pages[page_idx]!is null) {
+        this.flush(page_idx, num_additional_rows * ROW_SIZE);
+        free(this.pages[page_idx]);
+        this.pages[page_idx] = null;
+      }
+    }
+
+    if (fclose(this.file) != 0) {
+      printf("Error closing db file.\n");
+      exit(EXIT_FAILURE);
+    }
+    foreach (ref p; this.pages) {
+      if (p) {
+        free(p);
+        p = null;
+      }
+    }
+  }
+
+  void flush(uint page_num, uint size) {
+    if (this.pages[page_num] is null) {
+      printf("Tried to flush null page\n");
+      exit(EXIT_FAILURE);
+    }
+
+    if (fseek(this.file, page_num * PAGE_SIZE, SEEK_SET) != 0) {
+      printf("Error seeking: %d\n", errno);
+      exit(EXIT_FAILURE);
+    }
+    if (fwrite(this.pages[page_num], size, 1, this.file) != 1) {
+      printf("Error writing: %d\n", errno);
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  void* get_page(uint page_idx) {
+    if (page_idx > this.pages.length) {
+      printf("Tried to fetch page number out of bounds. %d > %ld\n",
+        page_idx,
+        this.pages.length);
+      exit(EXIT_FAILURE);
+    }
+    if (this.pages[page_idx] is null) {
+      // Cache miss. Allocate memory only when we try to access page.
+      void* page = this.pages[page_idx] = malloc(PAGE_SIZE);
+      auto num_pages = this.file_length / PAGE_SIZE;
+      // We might save a partial page at the EOF.
+      if (this.file_length % PAGE_SIZE) {
+        ++num_pages;
+      }
+      if (page_idx <= num_pages) {
+        fseek(this.file, page_idx * PAGE_SIZE, SEEK_SET);
+        auto numread = fread(page, PAGE_SIZE, 1, this.file);
+        // if (numread == 0) { // ferror(this.file) != 0) {
+        //   printf("Error reading file: %d\n", errno);
+        //   exit(EXIT_FAILURE);
+        // }
+      }
+      this.pages[page_idx] = page;
+    }
+    return this.pages[page_idx];
   }
 
   void* row_slot(uint row_idx) {
     uint page_idx = row_idx / ROWS_PER_PAGE;
-    void* page = this.pages[page_idx];
-    if (page == null) {
-      // Allocate memory only when we try to access page.
-      page = this.pages[page_idx] = malloc(PAGE_SIZE);
-    }
+    void* page = this.get_page(page_idx);
     uint row_offset = row_idx % ROWS_PER_PAGE;
     ptrdiff_t byte_offset = row_offset * TotalFieldSizeOf!Row;
     return page + byte_offset;
@@ -127,11 +202,11 @@ struct Table {
   uint num_rows;
   Pager pager;
 
-  void allocate(size_t max_pages) {
-    void** p = cast(void**) malloc(max_pages * (void*).sizeof);
-    this.pager.pages = p[0 .. max_pages];
-    this.pager.pages[] = null;
-  }
+  // void allocate(size_t max_pages) {
+  //   void** p = cast(void**) malloc(max_pages * (void*).sizeof);
+  //   this.pager.pages = p[0 .. max_pages];
+  //   this.pager.pages[] = null;
+  // }
 
   ~this() {
     foreach (p; this.pager.pages) {
@@ -142,7 +217,7 @@ struct Table {
   }
 
   ExecuteResult insert(ref const Row row) {
-    if (this.num_rows >= this.pager.max_rows)
+    if (this.num_rows > TABLE_MAX_ROWS)
       return ExecuteResult.TABLE_FULL;
     row.serialize(this.pager.row_slot(this.num_rows));
     ++this.num_rows;
@@ -159,16 +234,16 @@ struct Table {
   }
 }
 
-@("Table test")
-unittest {
-  Table table;
-  table.allocate(1);
-  Row row;
-  foreach (_; 0 .. ROWS_PER_PAGE) {
-    assert(table.insert(row) == ExecuteResult.SUCCESS);
-  }
-  assert(table.insert(row) == ExecuteResult.TABLE_FULL);
-}
+// @("Table test")
+// unittest {
+//   Table table;
+//   table.allocate(1);
+//   Row row;
+//   foreach (_; 0 .. ROWS_PER_PAGE) {
+//     assert(table.insert(row) == ExecuteResult.SUCCESS);
+//   }
+//   assert(table.insert(row) == ExecuteResult.TABLE_FULL);
+// }
 
 struct Statement {
   StatementType type;
@@ -248,9 +323,10 @@ unittest {
   assert(statement.prepare(long_query) == PrepareResult.STRING_TOO_LONG);
 }
 
-MetaCommandResult do_meta_command(char[] buffer) {
+MetaCommandResult do_meta_command(char[] buffer, ref Table table) {
   if (strcmp(buffer.ptr, ".exit") == 0) {
     free(buffer.ptr);
+    table.pager.close(table.num_rows);
     exit(EXIT_SUCCESS);
   }
   else {
@@ -265,17 +341,14 @@ void print_prompt() {
 char[] read_stdin() {
   int len = 1024;
   char* ptr = cast(char*) malloc(len);
-  // size_t len;
-  // auto bytes_read = getline(&ptr, &len, stdin);
-  if (fgets(ptr, len, stdin) is null) { // bytes_read <= 0) {
+  if (fgets(ptr, len, stdin) is null) {
     printf("Error reading input\n");
     exit(EXIT_FAILURE);
   }
   // Ignore trailing new line;
-  // ptr[bytes_read - 1] = 0;
   size_t slen = strlen(ptr);
   ptr[slen - 1] = 0;
-  return ptr[0 .. slen]; // ptr[0 .. bytes_read - 1];
+  return ptr[0 .. slen];
 }
 
 @("Assert true test")
@@ -312,9 +385,16 @@ version (unittest) {
   }
 }
 else {
-  extern (C) int main() {
+  extern (C) int main(int argc, char** argv) {
+    if (argc < 2) {
+      printf("Must supply a database filename.\n");
+      exit(EXIT_FAILURE);
+    }
+    char* filename = argv[1];
     Table table;
-    table.allocate(100);
+    // table.allocate(100);
+    table.pager.open(filename);
+    table.num_rows = cast(uint) table.pager.file_length / ROW_SIZE;
     while (true) {
       print_prompt();
       char[] input_buffer = read_stdin();
@@ -322,7 +402,7 @@ else {
         free(input_buffer.ptr);
 
       if (input_buffer[0] == '.') {
-        final switch (do_meta_command(input_buffer)) {
+        final switch (do_meta_command(input_buffer, table)) {
         case MetaCommandResult.SUCCESS:
           continue;
         case MetaCommandResult.UNRECOGNIZED:

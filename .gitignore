@@ -18,3 +18,4 @@ simpledb-test-*
 *~
 #*
 .#*
+*.db

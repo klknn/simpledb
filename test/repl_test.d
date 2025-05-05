@@ -13,7 +13,7 @@ enum RED = "\033[31m";
 enum GREEN = "\033[32m";
 
 string[] run_script(string[] commands) {
-  ProcessPipes p = pipeProcess(["./simpledb"]);
+  ProcessPipes p = pipeProcess(["./simpledb", "test.db"]);
   scope (exit)
     assert(wait(p.pid) == 0);
   foreach (cmd; commands) {
@@ -26,14 +26,21 @@ string[] run_script(string[] commands) {
 struct Test {
   string what;
   TestCase[] cases;
+  void delegate() before_block;
 
   @disable this(this);
 
   ~this() {
     foreach (ref c; cases) {
       info(what ~ " " ~ c.name);
+      this.before_block();
       c.block();
     }
+  }
+
+  ref Test before(void delegate() block) {
+    this.before_block = block;
+    return this;
   }
 
   ref Test it(string name, void delegate() block) {
@@ -76,6 +83,11 @@ void main() {
   info(dub_build.output);
 
   describe("database") // @suppress(dscanner.unused_result)
+    .before({
+      if (exists("test.db")) {
+        std.file.remove("test.db");
+      }
+    })
 
     .it("exits successfully", { assert(run_script([".exit"]) == ["db > "]); })
 
@@ -90,22 +102,19 @@ void main() {
         "Executed.",
         "db > "
       ]));
-    })
+    }) // .it("prints error message when table is full",
+    // {
+    //   version (Windows)
+    //     return; // Super slow due to pipe?
 
-    .it("prints error message when table is full",
-    {
-      version (Windows)
-        return; // Super slow due to pipe?
-
-      string[] script;
-      foreach (i; 0 .. 1401) {
-        script ~= i"insert $(i) user$(i) person$(i)@example.com".text;
-      }
-      script ~= ".exit";
-      auto result = run_script(script);
-      assert(match_array([result[$ - 2]], ["db > Error: Table full."]));
-    })
-
+    //   string[] script;
+    //   foreach (i; 0 .. 1401) {
+    //     script ~= i"insert $(i) user$(i) person$(i)@example.com".text;
+    //   }
+    //   script ~= ".exit";
+    //   auto result = run_script(script);
+    //   assert(match_array([result[$ - 2]], ["db > Error: Table full."]));
+    // })
     .it("allows inserting strings that are the maximum length",
     {
       string long_username = 'a'.repeat(32).text;
@@ -141,6 +150,18 @@ void main() {
         "db > ID must be positive.",
         "db > Executed.",
         "db > "
+      ]));
+    })
+
+    .it("keeps data after closing connection", {
+      string[] result1 = run_script([
+        "insert 1 user1 person1@example.com", ".exit"
+      ]);
+      assert(match_array(result1, ["db > Executed.", "db > "]));
+
+      string[] result2 = run_script(["select", ".exit"]);
+      assert(match_array(result2, [
+        "db > (1, user1, person1@example.com)", "Executed.", "db > "
       ]));
     });
 

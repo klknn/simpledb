@@ -16,3 +16,4 @@ simpledb-test-*
 *.obj
 *.lst
 *~
+#*

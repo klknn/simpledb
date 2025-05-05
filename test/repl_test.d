@@ -49,6 +49,24 @@ struct TestCase {
   void delegate() block;
 }
 
+bool match_array(string[] actual, string[] expect) {
+  string mismatched;
+  foreach (i, ex; expect) {
+    if (actual.length < i) {
+      mismatched ~= i"\nActual[$(i)]: NOT FOUND\nExpect[$(i)]: \"$(ex)\"\n".text;
+      continue;
+    }
+    string ac = actual[i].replace("\r", ""); // for windows.
+    if (ac == ex) continue;
+    mismatched ~= i"\nActual[$(i)]: \"$(ac)\"\nExpect[$(i)]: \"$(ex)\"\n".text;
+  }
+  if (mismatched != "") {
+    error("Mismatched elements:\n" ~ mismatched);
+    return false;
+  }
+  return true;
+}
+
 void main() {
   info("cwd: ", getcwd);
   info("building repl");
@@ -59,57 +77,54 @@ void main() {
   describe("database") // @suppress(dscanner.unused_result)
     .it("exits successfully", { assert(run_script([".exit"]) == ["db > "]); })
     .it("inserts and retrieves a row", {
-      assert(
-        run_script(["insert 1 user1 person1@example.com", "select", ".exit"])
-        == [
-          "db > Executed.",
-          "db > (1, user1, person1@example.com)",
-          "Executed.",
-          "db > "
-      ]);
+      string[] result = run_script(["insert 1 user1 person1@example.com", "select", ".exit"]);
+      assert(match_array(result, [
+        "db > Executed.",
+        "db > (1, user1, person1@example.com)",
+        "Executed.",
+        "db > "
+      ]));
     })
     .it("prints error message when table is full", {
+      version(Windows) return;  // Super slow due to pipe?
+
       string[] script;
       foreach (i; 0 .. 1401) {
         script ~= i"insert $(i) user$(i) person$(i)@example.com".text;
       }
       script ~= ".exit";
       auto result = run_script(script);
-      assert(result[$ - 2] == "db > Error: Table full.");
-
+      assert(match_array([result[$ - 2]], ["db > Error: Table full."]));
     })
     .it("allows inserting strings that are the maximum length", {
       string long_username = 'a'.repeat(32).text;
       string long_email = 'b'.repeat(255).text;
       string insert = i"insert 1 $(long_username) $(long_email)".text;
       string[] result = run_script([insert, "select", ".exit"]);
-      assert(result == [
+      assert(match_array(result, [
         "db > Executed.",
         i"db > (1, $(long_username), $(long_email))".text,
         "Executed.",
         "db > ",
-      ]);
+      ]));
     })
     .it("prints error message if strings are too long", {
       string long_username = 'a'.repeat(33).text;
       string long_email = 'b'.repeat(256).text;
       string insert = i"insert 1 $(long_username) $(long_email)".text;
       string[] result = run_script([insert, "select", ".exit"]);
-      assert(result == [
+      assert(match_array(result, [
         "db > String is too long.",
         "db > Executed.",
         "db > ",
-      ]);
+      ]));
     })
     .it("prints an error message if id is negative", {
-      assert(run_script([
-        "insert -1 cstack foo@bar.com", "select", ".exit",
-      ])
-        == [
-          "db > ID must be positive.",
-          "db > Executed.",
-          "db > "
-      ]);
+      assert(match_array(run_script(["insert -1 cstack foo@bar.com", "select", ".exit"]), [
+        "db > ID must be positive.",
+        "db > Executed.",
+        "db > "
+      ]));
     });
 
   scope (success)

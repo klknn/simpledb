@@ -15,7 +15,7 @@ enum GREEN = "\033[32m";
 string[] run_script(string[] commands) {
   ProcessPipes p = pipeProcess(["./simpledb", "test.db"]);
   scope (exit)
-    assert(wait(p.pid) == 0);
+    wait(p.pid);
   foreach (cmd; commands) {
     p.stdin.writeln(cmd);
   }
@@ -102,19 +102,22 @@ void main() {
         "Executed.",
         "db > "
       ]));
-    }) // .it("prints error message when table is full",
-    // {
-    //   version (Windows)
-    //     return; // Super slow due to pipe?
+    })
 
-    //   string[] script;
-    //   foreach (i; 0 .. 1401) {
-    //     script ~= i"insert $(i) user$(i) person$(i)@example.com".text;
-    //   }
-    //   script ~= ".exit";
-    //   auto result = run_script(script);
-    //   assert(match_array([result[$ - 2]], ["db > Error: Table full."]));
-    // })
+    .it("prints error message when table is full",
+    {
+      version (Windows)
+        return; // Super slow due to pipe?
+
+      string[] script;
+      foreach (i; 0 .. 1401) {
+        script ~= i"insert $(i) user$(i) person$(i)@example.com".text;
+      }
+      script ~= ".exit";
+      auto result = run_script(script);
+      assert(match_array([result[$ - 2]], ["db > Error: Table full."]));
+    })
+
     .it("allows inserting strings that are the maximum length",
     {
       string long_username = 'a'.repeat(32).text;

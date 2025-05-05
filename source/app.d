@@ -176,7 +176,7 @@ struct Pager {
       if (this.file_length % PAGE_SIZE) {
         ++num_pages;
       }
-      if (page_idx <= num_pages) {
+      if (page_idx <= num_pages && this.file !is null) {
         fseek(this.file, page_idx * PAGE_SIZE, SEEK_SET);
         auto numread = fread(page, PAGE_SIZE, 1, this.file);
         // if (numread == 0) { // ferror(this.file) != 0) {
@@ -202,12 +202,6 @@ struct Table {
   uint num_rows;
   Pager pager;
 
-  // void allocate(size_t max_pages) {
-  //   void** p = cast(void**) malloc(max_pages * (void*).sizeof);
-  //   this.pager.pages = p[0 .. max_pages];
-  //   this.pager.pages[] = null;
-  // }
-
   ~this() {
     foreach (p; this.pager.pages) {
       if (p is null)
@@ -217,7 +211,8 @@ struct Table {
   }
 
   ExecuteResult insert(ref const Row row) {
-    if (this.num_rows > TABLE_MAX_ROWS)
+    // printf("num_rows: %d\n", num_rows);
+    if (this.num_rows >= TABLE_MAX_ROWS)
       return ExecuteResult.TABLE_FULL;
     row.serialize(this.pager.row_slot(this.num_rows));
     ++this.num_rows;
@@ -234,16 +229,15 @@ struct Table {
   }
 }
 
-// @("Table test")
-// unittest {
-//   Table table;
-//   table.allocate(1);
-//   Row row;
-//   foreach (_; 0 .. ROWS_PER_PAGE) {
-//     assert(table.insert(row) == ExecuteResult.SUCCESS);
-//   }
-//   assert(table.insert(row) == ExecuteResult.TABLE_FULL);
-// }
+@("Table test")
+unittest {
+  Table table;
+  Row row;
+  foreach (_; 0 .. TABLE_MAX_ROWS) {
+    assert(table.insert(row) == ExecuteResult.SUCCESS);
+  }
+  assert(table.insert(row) == ExecuteResult.TABLE_FULL);
+}
 
 struct Statement {
   StatementType type;
@@ -392,9 +386,9 @@ else {
     }
     char* filename = argv[1];
     Table table;
-    // table.allocate(100);
     table.pager.open(filename);
     table.num_rows = cast(uint) table.pager.file_length / ROW_SIZE;
+
     while (true) {
       print_prompt();
       char[] input_buffer = read_stdin();

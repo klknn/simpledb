@@ -12,6 +12,7 @@
 import core.stdc.string;
 import core.stdc.stdlib;
 import core.stdc.stdio;
+import core.stdc.stdint;
 
 enum MetaCommandResult {
   SUCCESS,
@@ -63,12 +64,12 @@ enum TotalFieldSizeOf(T) = {
 @("Row test")
 unittest {
   assert(Row.id.sizeof == 4);
-  assert(Row.username.sizeof == 32);
-  assert(Row.email.sizeof == 255);
+  assert(Row.username.sizeof == 33);
+  assert(Row.email.sizeof == 256);
   assert(Row.id.offsetof == 0);
   assert(Row.username.offsetof == 4);
-  assert(Row.email.offsetof == 4 + 32);
-  static assert(TotalFieldSizeOf!Row == 4 + 32 + 255);
+  assert(Row.email.offsetof == 4 + 33);
+  static assert(TotalFieldSizeOf!Row == 4 + 33 + 256);
 
   Row src = {id: 1, username: "cstack", email: "foo@bar.com"};
   char[TotalFieldSizeOf!Row] buf;
@@ -89,26 +90,24 @@ enum ExecuteResult {
   TABLE_FULL
 }
 
-struct Table {
-  uint num_rows;
+struct Pager {
+  FILE* file;
+  ulong file_length;
   void*[] pages;
+
+  void open(const(char)[] filename) {
+    this.file = fopen(filename.ptr, "a+");
+    if (this.file is null) {
+      printf("Unable to open file\n");
+      exit(EXIT_FAILURE);
+    }
+    fseek(this.file, 0, SEEK_END);
+    this.file_length = ftell(this.file);
+    fseek(this.file, 0, SEEK_SET);
+  }
 
   size_t max_rows() const {
     return ROWS_PER_PAGE * pages.length;
-  }
-
-  void allocate(size_t max_pages) {
-    void** p = cast(void**) malloc(max_pages * (void*).sizeof);
-    this.pages = p[0 .. max_pages];
-    this.pages[] = null;
-  }
-
-  ~this() {
-    foreach (p; this.pages) {
-      if (p is null)
-        break;
-      free(p);
-    }
   }
 
   void* row_slot(uint row_idx) {
@@ -122,11 +121,30 @@ struct Table {
     ptrdiff_t byte_offset = row_offset * TotalFieldSizeOf!Row;
     return page + byte_offset;
   }
+}
+
+struct Table {
+  uint num_rows;
+  Pager pager;
+
+  void allocate(size_t max_pages) {
+    void** p = cast(void**) malloc(max_pages * (void*).sizeof);
+    this.pager.pages = p[0 .. max_pages];
+    this.pager.pages[] = null;
+  }
+
+  ~this() {
+    foreach (p; this.pager.pages) {
+      if (p is null)
+        break;
+      free(p);
+    }
+  }
 
   ExecuteResult insert(ref const Row row) {
-    if (this.num_rows >= this.max_rows)
+    if (this.num_rows >= this.pager.max_rows)
       return ExecuteResult.TABLE_FULL;
-    row.serialize(this.row_slot(this.num_rows));
+    row.serialize(this.pager.row_slot(this.num_rows));
     ++this.num_rows;
     return ExecuteResult.SUCCESS;
   }
@@ -134,7 +152,7 @@ struct Table {
   ExecuteResult select() {
     Row row;
     foreach (i; 0 .. this.num_rows) {
-      row.deserialize(this.row_slot(i));
+      row.deserialize(this.pager.row_slot(i));
       row.print();
     }
     return ExecuteResult.SUCCESS;
@@ -266,7 +284,6 @@ unittest {
 }
 
 version (unittest) {
-
   private template from(string modname) {
     mixin("import from = ", modname, ";");
   }
@@ -293,7 +310,6 @@ version (unittest) {
     printf("Test completed!\n");
     return 0;
   }
-
 }
 else {
   extern (C) int main() {

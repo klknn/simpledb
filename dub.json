@@ -11,6 +11,14 @@
             "name": "simpledb",
             "targetType": "executable",
             "buildOptions": ["betterC"],
+            "mainSourceFile": "source/app.d",
+        },
+        {
+            "name": "unittest",
+            "targetName": "simpledb_unit_test",
+            "buildOptions": ["betterC"],
+            "targetType": "executable",
+            "mainSourceFile": "source/app.d"
         },
         {
             "name": "simpledb_repl_test",

@@ -57,7 +57,8 @@ bool match_array(string[] actual, string[] expect) {
       continue;
     }
     string ac = actual[i].replace("\r", ""); // for windows.
-    if (ac == ex) continue;
+    if (ac == ex)
+      continue;
     mismatched ~= i"\nActual[$(i)]: \"$(ac)\"\nExpect[$(i)]: \"$(ex)\"\n".text;
   }
   if (mismatched != "") {
@@ -75,9 +76,14 @@ void main() {
   info(dub_build.output);
 
   describe("database") // @suppress(dscanner.unused_result)
+
     .it("exits successfully", { assert(run_script([".exit"]) == ["db > "]); })
-    .it("inserts and retrieves a row", {
-      string[] result = run_script(["insert 1 user1 person1@example.com", "select", ".exit"]);
+
+    .it("inserts and retrieves a row",
+    {
+      string[] result = run_script([
+        "insert 1 user1 person1@example.com", "select", ".exit"
+      ]);
       assert(match_array(result, [
         "db > Executed.",
         "db > (1, user1, person1@example.com)",
@@ -85,8 +91,11 @@ void main() {
         "db > "
       ]));
     })
-    .it("prints error message when table is full", {
-      version(Windows) return;  // Super slow due to pipe?
+
+    .it("prints error message when table is full",
+    {
+      version (Windows)
+        return; // Super slow due to pipe?
 
       string[] script;
       foreach (i; 0 .. 1401) {
@@ -96,7 +105,9 @@ void main() {
       auto result = run_script(script);
       assert(match_array([result[$ - 2]], ["db > Error: Table full."]));
     })
-    .it("allows inserting strings that are the maximum length", {
+
+    .it("allows inserting strings that are the maximum length",
+    {
       string long_username = 'a'.repeat(32).text;
       string long_email = 'b'.repeat(255).text;
       string insert = i"insert 1 $(long_username) $(long_email)".text;
@@ -108,7 +119,9 @@ void main() {
         "db > ",
       ]));
     })
-    .it("prints error message if strings are too long", {
+
+    .it("prints error message if strings are too long",
+    {
       string long_username = 'a'.repeat(33).text;
       string long_email = 'b'.repeat(256).text;
       string insert = i"insert 1 $(long_username) $(long_email)".text;
@@ -119,8 +132,12 @@ void main() {
         "db > ",
       ]));
     })
-    .it("prints an error message if id is negative", {
-      assert(match_array(run_script(["insert -1 cstack foo@bar.com", "select", ".exit"]), [
+
+    .it("prints an error message if id is negative",
+    {
+      assert(match_array(run_script([
+        "insert -1 cstack foo@bar.com", "select", ".exit"
+      ]), [
         "db > ID must be positive.",
         "db > Executed.",
         "db > "

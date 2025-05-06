@@ -114,6 +114,37 @@ void main() {
       assert(match_array(result2, [
         "db > (1, user1, person1@example.com)", "Executed.", "db > "
       ]));
+    })
+
+    .it("allows printing out the structure of a one-node btree", {
+      string[] script = [3, 1, 2]
+        .map!(i => i"insert $(i) user$(i) person$(i)@example.com".text)
+        .array;
+      script ~= ".btree";
+      script ~= ".exit";
+      assert(match_array(run_script(script), [
+        "db > Executed.",
+        "db > Executed.",
+        "db > Executed.",
+        "db > Tree:",
+        "leaf (size 3)",
+        "  - 0 : 3",
+        "  - 1 : 1",
+        "  - 2 : 2",
+        "db > "
+      ]));
+    })
+
+    .it("prints constants", {
+      assert(match_array(run_script([".constants", ".exit"]), [
+        "db > Constants:",
+        "ROW_SIZE: 293",
+        "COMMON_NODE_HEADER_SIZE: 6",
+        "LEAF_NODE_CELL_SIZE: 297",
+        "LEAF_NODE_SPACE_FOR_CELLS: 4086",
+        "LEAF_NODE_MAX_CELLS: 13",
+        "db > ",
+      ]));
     });
 
   scope (success)

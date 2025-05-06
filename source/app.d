@@ -15,6 +15,28 @@ import core.stdc.stdio;
 import core.stdc.stdint;
 import core.stdc.errno;
 
+align(1) struct LeafNode {
+  align(1) struct Header {
+  align(1):
+    ubyte node_type;
+    bool is_root;
+    uint parent_pointer;
+  }
+
+  align(1) struct Cell {
+    uint key;
+    void[ROW_SIZE] value;
+  }
+
+  enum SPACE_FOR_CELLS = PAGE_SIZE - Header.sizeof - uint.sizeof;
+  enum MAX_CELLS = SPACE_FOR_CELLS / Cell.sizeof;
+
+align(1):
+  Header header;
+  uint num_cells;
+  Cell[MAX_CELLS] cells;
+}
+
 enum MetaCommandResult {
   SUCCESS,
   UNRECOGNIZED
@@ -84,8 +106,6 @@ unittest {
 
 enum uint PAGE_SIZE = 4096;
 enum uint TABLE_MAX_PAGES = 100;
-enum uint ROWS_PER_PAGE = PAGE_SIZE / TotalFieldSizeOf!Row;
-const uint TABLE_MAX_ROWS = ROWS_PER_PAGE * TABLE_MAX_PAGES;
 enum uint ROW_SIZE = TotalFieldSizeOf!Row;
 
 enum ExecuteResult {
@@ -95,7 +115,8 @@ enum ExecuteResult {
 
 struct Pager {
   FILE* file;
-  ulong file_length;
+  uint file_length;
+  uint num_pages;
   void*[TABLE_MAX_PAGES] pages;
 
   void open(const(char)* filename) {
@@ -105,31 +126,23 @@ struct Pager {
       exit(EXIT_FAILURE);
     }
     fseek(this.file, 0, SEEK_END);
-    this.file_length = ftell(this.file);
+    this.file_length = cast(uint) ftell(this.file);
     fseek(this.file, 0, SEEK_SET);
+    this.num_pages = this.file_length / PAGE_SIZE;
+    if (this.file_length % PAGE_SIZE != 0) {
+      printf("Db file is not a whole number of pages. Corrupt file.\n");
+      exit(EXIT_FAILURE);
+    }
   }
 
-  void close(uint num_rows) {
-    uint num_full_pages = num_rows / ROWS_PER_PAGE;
-    foreach (i; 0 .. num_full_pages) {
+  void close() {
+    foreach (i; 0 .. this.num_pages) {
       if (this.pages[i] is null) {
         continue;
       }
-      this.flush(i, PAGE_SIZE);
+      this.flush(i);
       free(this.pages[i]);
       this.pages[i] = null;
-    }
-
-    // There may be a partial page to write to the end of the file
-    // This should not be needed after we switch to a B-tree
-    uint num_additional_rows = num_rows % ROWS_PER_PAGE;
-    if (num_additional_rows > 0) {
-      uint page_idx = num_full_pages;
-      if (pages[page_idx]!is null) {
-        this.flush(page_idx, num_additional_rows * ROW_SIZE);
-        free(this.pages[page_idx]);
-        this.pages[page_idx] = null;
-      }
     }
 
     if (fclose(this.file) != 0) {
@@ -144,7 +157,7 @@ struct Pager {
     }
   }
 
-  void flush(uint page_num, uint size) {
+  void flush(uint page_num) {
     if (this.pages[page_num] is null) {
       printf("Tried to flush null page\n");
       exit(EXIT_FAILURE);
@@ -154,66 +167,97 @@ struct Pager {
       printf("Error seeking: %d\n", errno);
       exit(EXIT_FAILURE);
     }
-    if (fwrite(this.pages[page_num], size, 1, this.file) != 1) {
+    if (fwrite(this.pages[page_num], PAGE_SIZE, 1, this.file) != 1) {
       printf("Error writing: %d\n", errno);
       exit(EXIT_FAILURE);
     }
   }
 
-  void* get_page(uint page_idx) {
-    if (page_idx > this.pages.length) {
+  LeafNode* get_page(uint page_num) {
+    if (page_num > this.pages.length) {
       printf("Tried to fetch page number out of bounds. %d > %ld\n",
-        page_idx,
+        page_num,
         this.pages.length);
       exit(EXIT_FAILURE);
     }
-    if (this.pages[page_idx] is null) {
+    if (this.pages[page_num] is null) {
       // Cache miss. Allocate memory only when we try to access page.
-      void* page = this.pages[page_idx] = malloc(PAGE_SIZE);
+      void* page = this.pages[page_num] = malloc(PAGE_SIZE);
       auto num_pages = this.file_length / PAGE_SIZE;
       // We might save a partial page at the EOF.
       if (this.file_length % PAGE_SIZE) {
         ++num_pages;
       }
-      if (page_idx <= num_pages && this.file !is null) {
-        fseek(this.file, page_idx * PAGE_SIZE, SEEK_SET);
+      if (page_num <= num_pages && this.file !is null) {
+        fseek(this.file, page_num * PAGE_SIZE, SEEK_SET);
         fread(page, PAGE_SIZE, 1, this.file);
         if (ferror(this.file) != 0) {
           printf("Error reading file: %d\n", errno);
           exit(EXIT_FAILURE);
         }
       }
-      this.pages[page_idx] = page;
+      this.pages[page_num] = page;
+      if (page_num >= this.num_pages) {
+        this.num_pages = page_num + 1;
+      }
     }
-    return this.pages[page_idx];
+    return cast(LeafNode*) this.pages[page_num];
   }
 }
 
 struct Cursor {
   Table* table;
-  uint row_idx;
+  uint page_num, cell_num;
 
   // InputRange requires these three.
-  bool empty() const {
-    return row_idx >= table.num_rows;
+  bool empty() {
+    return this.cell_num >= this.node.num_cells;
   }
 
   void popFront() {
-    ++row_idx;
+    ++this.cell_num;
+  }
+
+  LeafNode* node() {
+    return this.table.pager.get_page(this.page_num);
   }
 
   void* front() {
-    uint page_idx = this.row_idx / ROWS_PER_PAGE;
-    void* page = this.table.pager.get_page(page_idx);
-    uint row_offset = this.row_idx % ROWS_PER_PAGE;
-    ptrdiff_t byte_offset = row_offset * ROW_SIZE;
-    return page + byte_offset;
+    return this.node.cells[this.cell_num].value.ptr;
+  }
+
+  void insert(uint key, const ref Row value) {
+    if (this.node.num_cells >= LeafNode.MAX_CELLS) {
+      // Node full
+      printf("Need to implement splitting a leaf node.\n");
+      exit(EXIT_FAILURE);
+    }
+
+    if (this.cell_num < this.node.num_cells) {
+      // Make room for new cell
+      for (uint i = this.node.num_cells; i < this.cell_num; --i) {
+        // this.node.cells[i] = this.node.cells[i - 1];
+        memcpy(&this.node.cells[i], &this.node.cells[i - 1], LeafNode.Cell.sizeof);
+      }
+    }
+    ++this.node.num_cells;
+    this.node.cells[this.cell_num].key = key;
+    value.serialize(&this.node.cells[this.cell_num].value);
   }
 }
 
 struct Table {
-  uint num_rows;
+  uint root_page_num;
   Pager pager;
+
+  void open(char* filename) {
+    this.pager.open(filename);
+    if (this.pager.num_pages == 0) {
+      // New database file.
+      auto root_node = this.pager.get_page(0);
+      *root_node = LeafNode();
+    }
+  }
 
   ~this() {
     foreach (p; this.pager.pages) {
@@ -224,18 +268,21 @@ struct Table {
   }
 
   Cursor start() {
-    return Cursor(&this, 0);
+    return Cursor(&this, this.root_page_num);
+
   }
 
   Cursor end() {
-    return Cursor(&this, this.num_rows);
+    return Cursor(&this,
+      this.root_page_num,
+      this.pager.get_page(this.root_page_num).num_cells);
   }
 
   ExecuteResult insert(ref const Row row) {
-    if (this.num_rows >= TABLE_MAX_ROWS)
+    if (this.pager.get_page(this.root_page_num).num_cells >= LeafNode.MAX_CELLS) {
       return ExecuteResult.TABLE_FULL;
-    row.serialize(this.end().front());
-    ++this.num_rows;
+    }
+    this.end().insert(row.id, row);
     return ExecuteResult.SUCCESS;
   }
 
@@ -249,15 +296,15 @@ struct Table {
   }
 }
 
-@("Table test")
-unittest {
-  Table table;
-  Row row;
-  foreach (_; 0 .. TABLE_MAX_ROWS) {
-    assert(table.insert(row) == ExecuteResult.SUCCESS);
-  }
-  assert(table.insert(row) == ExecuteResult.TABLE_FULL);
-}
+// @("Table test")
+// unittest {
+//   Table table;
+//   Row row;
+//   foreach (_; 0 .. TABLE_MAX_ROWS) {
+//     assert(table.insert(row) == ExecuteResult.SUCCESS);
+//   }
+//   assert(table.insert(row) == ExecuteResult.TABLE_FULL);
+// }
 
 struct Statement {
   StatementType type;
@@ -337,11 +384,36 @@ unittest {
   assert(statement.prepare(long_query) == PrepareResult.STRING_TOO_LONG);
 }
 
+void print_constants() {
+  printf("ROW_SIZE: %d\n", ROW_SIZE);
+  printf("COMMON_NODE_HEADER_SIZE: %d\n", LeafNode.Header.sizeof);
+  printf("LEAF_NODE_CELL_SIZE: %d\n", LeafNode.Cell.sizeof);
+  printf("LEAF_NODE_SPACE_FOR_CELLS: %d\n", LeafNode.SPACE_FOR_CELLS);
+  printf("LEAF_NODE_MAX_CELLS: %d\n", LeafNode.MAX_CELLS);
+}
+
+void print_leaf_node(LeafNode* node) {
+  printf("leaf (size %d)\n", node.num_cells);
+  for (uint i = 0; i < node.num_cells; i++) {
+    printf("  - %d : %d\n", i, node.cells[i].key);
+  }
+}
+
 MetaCommandResult do_meta_command(char[] buffer, ref Table table) {
   if (strcmp(buffer.ptr, ".exit") == 0) {
     free(buffer.ptr);
-    table.pager.close(table.num_rows);
+    table.pager.close();
     exit(EXIT_SUCCESS);
+  }
+  else if (strcmp(buffer.ptr, ".btree") == 0) {
+    printf("Tree:\n");
+    print_leaf_node(table.pager.get_page(0));
+    return MetaCommandResult.SUCCESS;
+  }
+  else if (strcmp(buffer.ptr, ".constants") == 0) {
+    printf("Constants:\n");
+    print_constants();
+    return MetaCommandResult.SUCCESS;
   }
   else {
     return MetaCommandResult.UNRECOGNIZED;
@@ -410,8 +482,7 @@ else {
     }
     char* filename = argv[1];
     Table table;
-    table.pager.open(filename);
-    table.num_rows = cast(uint) table.pager.file_length / ROW_SIZE;
+    table.open(filename);
 
     while (true) {
       print_prompt();

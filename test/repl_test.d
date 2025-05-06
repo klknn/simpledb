@@ -1,9 +1,10 @@
-import std.process;
-import std.stdio;
-import std.string;
-import std.file;
+module repl_test;
+
+import dspec : DSpec, match_array;
+import std.process : execute, pipeProcess, ProcessPipes, wait;
+import std.file : exists, getcwd, remove;
 import std.array : array;
-import std.algorithm : map;
+import std.algorithm : each, map;
 import std.logger : info, error;
 import std.conv : text;
 import std.range : repeat;
@@ -16,80 +17,27 @@ string[] run_script(string[] commands) {
   ProcessPipes p = pipeProcess(["./simpledb", "test.db"]);
   scope (exit)
     wait(p.pid);
-  foreach (cmd; commands) {
-    p.stdin.writeln(cmd);
-  }
+  commands.each!(x => p.stdin.writeln(x));
   p.stdin.close();
-  return array(p.stdout.byLine.map!idup);
-}
-
-struct Test {
-  string what;
-  TestCase[] cases;
-  void delegate() before_block;
-
-  @disable this(this);
-
-  ~this() {
-    foreach (ref c; cases) {
-      info(what ~ " " ~ c.name);
-      this.before_block();
-      c.block();
-    }
-  }
-
-  ref Test before(void delegate() block) {
-    this.before_block = block;
-    return this;
-  }
-
-  ref Test it(string name, void delegate() block) {
-    cases ~= TestCase(name, block);
-    return this;
-  }
-}
-
-alias describe = Test;
-
-struct TestCase {
-  string name;
-  void delegate() block;
-}
-
-bool match_array(string[] actual, string[] expect) {
-  string mismatched;
-  foreach (i, ex; expect) {
-    if (actual.length < i) {
-      mismatched ~= i"\nActual[$(i)]: NOT FOUND\nExpect[$(i)]: \"$(ex)\"\n".text;
-      continue;
-    }
-    string ac = actual[i].replace("\r", ""); // for windows.
-    if (ac == ex)
-      continue;
-    mismatched ~= i"\nActual[$(i)]: \"$(ac)\"\nExpect[$(i)]: \"$(ex)\"\n".text;
-  }
-  if (mismatched != "") {
-    error("Mismatched elements:\n" ~ mismatched);
-    return false;
-  }
-  return true;
+  return p.stdout.byLine.map!idup.array;
 }
 
 void main() {
   info("cwd: ", getcwd);
   info("building repl");
   auto dub_build = execute(["dub", "build"]);
-  assert(dub_build.status == 0);
-  info(dub_build.output);
+  assert(dub_build.status == 0, dub_build.output);
 
-  describe("database") // @suppress(dscanner.unused_result)
+  DSpec("database")
     .before({
       if (exists("test.db")) {
-        std.file.remove("test.db");
+        remove("test.db");
       }
     })
 
-    .it("exits successfully", { assert(run_script([".exit"]) == ["db > "]); })
+    .it("exits successfully", {
+      assert(match_array(run_script([".exit"]), ["db > "]));
+    })
 
     .it("inserts and retrieves a row",
     {
@@ -169,7 +117,7 @@ void main() {
     });
 
   scope (success)
-    info(GREEN ~ "=== TEST PASSED 😁 ===" ~ RESET);
+    info("\n" ~ GREEN ~ "=== REPL TEST PASSED 😉 ===" ~ RESET);
   scope (failure)
-    error(RED ~ "=== TEST FAILED 😭 ===" ~ RESET);
+    error("\n" ~ RED ~ "=== REPL TEST FAILED 😭 ===" ~ RESET);
 }

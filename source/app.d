@@ -106,7 +106,6 @@ struct Pager {
     }
     fseek(this.file, 0, SEEK_END);
     this.file_length = ftell(this.file);
-    // printf("rows: %d\n", this.file_length / ROW_SIZE);
     fseek(this.file, 0, SEEK_SET);
   }
 
@@ -178,11 +177,11 @@ struct Pager {
       }
       if (page_idx <= num_pages && this.file !is null) {
         fseek(this.file, page_idx * PAGE_SIZE, SEEK_SET);
-        auto numread = fread(page, PAGE_SIZE, 1, this.file);
-        // if (numread == 0) { // ferror(this.file) != 0) {
-        //   printf("Error reading file: %d\n", errno);
-        //   exit(EXIT_FAILURE);
-        // }
+        fread(page, PAGE_SIZE, 1, this.file);
+        if (ferror(this.file) != 0) {
+          printf("Error reading file: %d\n", errno);
+          exit(EXIT_FAILURE);
+        }
       }
       this.pages[page_idx] = page;
     }
@@ -211,7 +210,6 @@ struct Table {
   }
 
   ExecuteResult insert(ref const Row row) {
-    // printf("num_rows: %d\n", num_rows);
     if (this.num_rows >= TABLE_MAX_ROWS)
       return ExecuteResult.TABLE_FULL;
     row.serialize(this.pager.row_slot(this.num_rows));
@@ -351,6 +349,10 @@ unittest {
 }
 
 version (unittest) {
+  enum RESET = "\033[0m";
+  enum RED = "\033[31m";
+  enum GREEN = "\033[32m";
+
   private template from(string modname) {
     mixin("import from = ", modname, ";");
   }
@@ -374,7 +376,7 @@ version (unittest) {
         }
       }
     }
-    printf("Test completed!\n");
+    printf(GREEN ~ "=== UNIT TEST PASSED 😉 ===\n" ~ RESET);
     return 0;
   }
 }

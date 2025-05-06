@@ -25,6 +25,7 @@
             "targetName": "simpledb_repl_test",
             "targetType": "executable",
             "mainSourceFile": "test/repl_test.d",
+            "sourcePaths": ["test"],
             "excludedSourceFiles": ["source/app.d"]
         }
     ]

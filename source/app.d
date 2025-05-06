@@ -187,12 +187,26 @@ struct Pager {
     }
     return this.pages[page_idx];
   }
+}
 
-  void* row_slot(uint row_idx) {
-    uint page_idx = row_idx / ROWS_PER_PAGE;
-    void* page = this.get_page(page_idx);
-    uint row_offset = row_idx % ROWS_PER_PAGE;
-    ptrdiff_t byte_offset = row_offset * TotalFieldSizeOf!Row;
+struct Cursor {
+  Table* table;
+  uint row_idx;
+
+  // InputRange requires these three.
+  bool empty() const {
+    return row_idx >= table.num_rows;
+  }
+
+  void popFront() {
+    ++row_idx;
+  }
+
+  void* front() {
+    uint page_idx = this.row_idx / ROWS_PER_PAGE;
+    void* page = this.table.pager.get_page(page_idx);
+    uint row_offset = this.row_idx % ROWS_PER_PAGE;
+    ptrdiff_t byte_offset = row_offset * ROW_SIZE;
     return page + byte_offset;
   }
 }
@@ -209,18 +223,26 @@ struct Table {
     }
   }
 
+  Cursor start() {
+    return Cursor(&this, 0);
+  }
+
+  Cursor end() {
+    return Cursor(&this, this.num_rows);
+  }
+
   ExecuteResult insert(ref const Row row) {
     if (this.num_rows >= TABLE_MAX_ROWS)
       return ExecuteResult.TABLE_FULL;
-    row.serialize(this.pager.row_slot(this.num_rows));
+    row.serialize(this.end().front());
     ++this.num_rows;
     return ExecuteResult.SUCCESS;
   }
 
   ExecuteResult select() {
     Row row;
-    foreach (i; 0 .. this.num_rows) {
-      row.deserialize(this.pager.row_slot(i));
+    foreach (void* x; this.start()) {
+      row.deserialize(x);
       row.print();
     }
     return ExecuteResult.SUCCESS;
